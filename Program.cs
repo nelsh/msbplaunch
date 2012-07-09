@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
+using NLog;
+using IniParser;
 
 namespace msbplaunch
 {
@@ -8,6 +10,7 @@ namespace msbplaunch
 	{
 		static void Main(string[] args)
 		{
+
 		}
 	}
 }
