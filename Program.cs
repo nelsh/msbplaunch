@@ -1,5 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
+using System.Collections;
+using System.Data.SqlClient;
 using System.IO;
 using System.Text;
 using NLog;
@@ -19,14 +20,70 @@ namespace msbplaunch
 			// Read and check program settings
 			ProgramSettings currentSettings = new ProgramSettings(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
 				System.Diagnostics.Process.GetCurrentProcess().ProcessName + ".ini"));
-			Console.WriteLine(String.Format("Path to msbp.exe: {0}", currentSettings.MsbpExe));
-			Console.WriteLine(String.Format("Path to backup: {0}", currentSettings.BackupPath));
+			// Get list active databases, exclude system databases
+			ArrayList aDatabases = getDatabasesList();
+
+			// Run backup command for every database
+			foreach (Object db in aDatabases)
+			{
+				log.Info(String.Format("Backup start for: {0}", db.ToString()));
+			}
 
 			log.Info("MSBPLaunch successfully");
+		}
+		
+		/// <summary>
+		/// Get list active databases, exclude system databases
+		/// </summary>
+		/// <returns>ArrayList of Databases</returns>
+		static ArrayList getDatabasesList()
+		{
+			SqlConnection connection = new SqlConnection("Persist Security Info=False;Trusted_Connection=True;database=master;server=(local)");
+			SqlCommand command = new SqlCommand(
+				"SELECT name FROM sysdatabases WHERE (name NOT IN('master', 'model', 'msdb', 'tempdb', 'distribution')) AND (CONVERT(bit, status & 512)=0) ORDER BY name",
+				connection);
+			SqlDataReader reader = null;
+			try
+			{
+				connection.Open();
+				reader = command.ExecuteReader();
+			}
+			catch (Exception ex)
+			{
+				reader.Close();
+				connection.Close();
+				Program.log.Fatal(String.Format("MSBPLaunch stop: Could not get databases list. Stack: {0}", ex));
+				Environment.Exit(2);
+			}
+			ArrayList aDatabases = new ArrayList();
+			if (reader.HasRows)
+				while (reader.Read())
+					aDatabases.Add(reader.GetString(0));
+			reader.Close();
+			connection.Close();
+			// If databaselist is empty - exit
+			if (aDatabases.Count == 0)
+			{
+				Program.log.Warn("MSBPLaunch stop: Databases for backup not found");
+				Environment.Exit(2);
+			}
+			else
+				log.Info("Found " + aDatabases.Count + " databases for backup");
+			return aDatabases;
 		}
 
 	}
 
+	/// <summary>
+	/// Struct for store settings
+	/// General settings:
+	/// - string ProgramSettings.MsbpExe - path to msbp.exe,
+	/// - string ProgramSettings.BackupPath - path to store backups, create it if not exists.
+	/// Storage time in days:
+	/// - TODO.
+	/// Mail settings:
+	/// - TODO.
+	/// </summary>
 	public struct ProgramSettings
 	{
 		public string MsbpExe;		// Path to SQL Compressed binary (msbp.exe)
