@@ -34,7 +34,6 @@ namespace msbplaunch
 			// Run backup command for every database
 			foreach (String db in aDatabases)
 			{
-				log.Info(String.Format("Backup start for: {0}", db));
 				runDatabaseBackup(db);
 			}
 
@@ -90,6 +89,27 @@ namespace msbplaunch
 		/// <param name="db">database name</param>
 		static void runDatabaseBackup(String db)
 		{
+			log.Info(String.Format("Backup start for: {0}", db));
+			// Check path for backup
+			string backupPath = Path.Combine(currentSettings.BackupPath, db.ToString());
+			if (!Directory.Exists(backupPath))
+			{
+				Program.log.Info(String.Format("... not exist directory \"{0}\". Create it.", backupPath));
+				try
+				{
+					Directory.CreateDirectory(backupPath);
+				}
+				catch
+				{
+					Program.log.Error(String.Format("... backup stop with error: Cannot create directory {0}.", backupPath));
+					return;
+				}
+			}
+			// Construct argument string
+			string backupFile = String.Format("{0}_{1}{2}.zip", db, currentBackups.Id, currentBackups.CurrentDateString);
+			string arg = String.Format("backup db(database={0};backuptype={1}) zip64(level=5)) file:///{2}",
+				db, currentBackups.Method, Path.Combine(backupPath,backupFile));
+			log.Debug("... run backup: " + currentSettings.MsbpExe + " " + arg);
 		}
 	}
 
