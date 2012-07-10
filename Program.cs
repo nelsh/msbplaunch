@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Data.SqlClient;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using NLog;
@@ -12,21 +13,29 @@ namespace msbplaunch
 	{
 		// Create instance for Nlog
 		static public Logger log = LogManager.GetLogger("msbplaunch");
+		// struct for store program settings
+		static public ProgramSettings currentSettings;
+		// struct for store backup settings
+		static public BackupSettings currentBackups;
 
 		static void Main(string[] args)
 		{
 			log.Info("MSBPLaunch start");
 
 			// Read and check program settings
-			ProgramSettings currentSettings = new ProgramSettings(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
+			currentSettings = new ProgramSettings(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
 				System.Diagnostics.Process.GetCurrentProcess().ProcessName + ".ini"));
 			// Get list active databases, exclude system databases
 			ArrayList aDatabases = getDatabasesList();
+			// Set current backup settings
+			currentBackups = new BackupSettings(DateTime.Now);
+
 
 			// Run backup command for every database
-			foreach (Object db in aDatabases)
+			foreach (String db in aDatabases)
 			{
-				log.Info(String.Format("Backup start for: {0}", db.ToString()));
+				log.Info(String.Format("Backup start for: {0}", db));
+				runDatabaseBackup(db);
 			}
 
 			log.Info("MSBPLaunch successfully");
@@ -72,6 +81,16 @@ namespace msbplaunch
 			return aDatabases;
 		}
 
+		/// <summary>
+		/// Run database backup
+		/// - check path for store database backup
+		/// - construct msbp.exe call
+		/// - run msbp.exe process and check output 
+		/// </summary>
+		/// <param name="db">database name</param>
+		static void runDatabaseBackup(String db)
+		{
+		}
 	}
 
 	/// <summary>
@@ -144,4 +163,50 @@ namespace msbplaunch
 			}
 		}
 	}
+
+	/// <summary>
+	/// Settings for current backup
+	/// - DateTime CurrentDateTime - store current datetime
+	/// - string CurrentDateString - date in format yyyyMMdd
+	/// - string Id - identificator of backup type (D - daily, W - weekly, Q - quarter)
+	/// - string Method - backup method: differential or full
+	/// </summary>
+	public struct BackupSettings
+	{
+		public DateTime CurrentDateTime;
+		public string CurrentDateString;
+		public string Id;
+		public string Method;
+
+		public BackupSettings(DateTime dt)
+		{
+			CurrentDateTime = dt;
+			CurrentDateString = dt.ToString("yyyyMMdd");
+			switch ((int)dt.DayOfWeek)
+			{
+				case 6:
+					int CurrentWeekYear = CultureInfo.CurrentCulture.Calendar.GetWeekOfYear
+					(
+						CurrentDateTime,
+						CultureInfo.CurrentCulture.DateTimeFormat.CalendarWeekRule,
+						CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek
+					);
+					Method = "full";
+					if ((CurrentWeekYear % 13) == 1)
+					{
+						Id = "Q";
+					}
+					else
+					{
+						Id = "W";
+					}
+					break;
+				default:
+					Id = "D";
+					Method = "differential";
+					break;
+			}
+		}
+	}
+
 }
