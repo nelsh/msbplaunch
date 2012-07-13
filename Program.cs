@@ -18,6 +18,10 @@ namespace msbplaunch
 		static public ProgramSettings currentSettings;
 		// struct for store backup settings
 		static public BackupSettings currentBackups;
+		// create variables for report
+		static double TotalBackupSize = 0;
+		static int TotalBackupSuccess = 0;
+
 
 		static void Main(string[] args)
 		{
@@ -38,7 +42,8 @@ namespace msbplaunch
 				runDatabaseBackup(db);
 			}
 
-			log.Info("MSBPLaunch successfully");
+			log.Info(String.Format("MSBPLaunch successfully: databases {0}/{1}, total size {2} Mb", 
+				TotalBackupSuccess, aDatabases.Count, Math.Round(TotalBackupSize / 1024 / 1024)));
 		}
 		
 		/// <summary>
@@ -91,6 +96,7 @@ namespace msbplaunch
 		static void runDatabaseBackup(String db)
 		{
 			log.Info(String.Format("Backup start for: {0}", db));
+
 			// Check path for backup
 			string backupPath = Path.Combine(currentSettings.BackupPath, db.ToString());
 			if (!Directory.Exists(backupPath))
@@ -106,11 +112,13 @@ namespace msbplaunch
 					return;
 				}
 			}
+
 			// Construct argument string
-			string backupFile = String.Format("{0}_{1}{2}.zip", db, currentBackups.Id, currentBackups.CurrentDateString);
+			string backupFile = Path.Combine(backupPath,String.Format("{0}_{1}{2}.zip", db, currentBackups.Id, currentBackups.CurrentDateString));
 			string arg = String.Format("backup db(database={0};backuptype={1}) zip64(level=5) file:///{2}",
-				db, currentBackups.Method, Path.Combine(backupPath,backupFile));
+				db, currentBackups.Method, backupFile);
 			log.Debug("... run backup: " + currentSettings.MsbpExe + " " + arg);
+	
 			// Create and run external process
 			Process p = new Process();
 			p.StartInfo.FileName = currentSettings.MsbpExe;
@@ -122,6 +130,32 @@ namespace msbplaunch
 			p.Start();
 			string sOutput = p.StandardOutput.ReadToEnd(); // read output to temporary string
 			p.WaitForExit();
+
+			// Check output and calculate totals for report
+			string[] aOutput = sOutput.Split('\n');
+			string successfully = aOutput[aOutput.Length - 2];
+			string BackupTime = "ERROR";
+			double BackupSize = 0;
+			if (successfully.StartsWith("Completed Successfully."))
+			{
+				try
+				{
+					BackupTime = successfully.Split('.')[1].Trim();
+					FileInfo fi = new FileInfo(backupFile);
+					BackupSize = Math.Round((double)fi.Length / 1024 / 1024);
+					TotalBackupSize += fi.Length;
+					TotalBackupSuccess++;
+					log.Info("... Time: " + BackupTime + ", Size: " + BackupSize + " Mb.");
+				}
+				catch
+				{
+					log.Error("... Backup File Not Found: " + backupFile);
+				}
+			}
+			else
+			{
+				log.Error(String.Format("... ERROR: {0}", sOutput));
+			}
 
 		}
 	}
