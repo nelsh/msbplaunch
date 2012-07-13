@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Data.SqlClient;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -107,9 +108,21 @@ namespace msbplaunch
 			}
 			// Construct argument string
 			string backupFile = String.Format("{0}_{1}{2}.zip", db, currentBackups.Id, currentBackups.CurrentDateString);
-			string arg = String.Format("backup db(database={0};backuptype={1}) zip64(level=5)) file:///{2}",
+			string arg = String.Format("backup db(database={0};backuptype={1}) zip64(level=5) file:///{2}",
 				db, currentBackups.Method, Path.Combine(backupPath,backupFile));
 			log.Debug("... run backup: " + currentSettings.MsbpExe + " " + arg);
+			// Create and run external process
+			Process p = new Process();
+			p.StartInfo.FileName = currentSettings.MsbpExe;
+			p.StartInfo.Arguments = arg;
+			p.StartInfo.UseShellExecute = false;
+			p.StartInfo.LoadUserProfile = false;
+			p.StartInfo.CreateNoWindow = true;
+			p.StartInfo.RedirectStandardOutput = true;
+			p.Start();
+			string sOutput = p.StandardOutput.ReadToEnd(); // read output to temporary string
+			p.WaitForExit();
+
 		}
 	}
 
