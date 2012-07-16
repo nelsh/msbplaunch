@@ -4,6 +4,8 @@ using System.Data.SqlClient;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Net.Mime;
+using System.Net.Mail;
 using System.Text;
 using NLog;
 using IniParser;
@@ -21,6 +23,7 @@ namespace msbplaunch
 		// create variables for report
 		static double TotalBackupSize = 0;
 		static int TotalBackupSuccess = 0;
+		static SortedList ReportDatabases = new SortedList();
 
 
 		static void Main(string[] args)
@@ -41,6 +44,8 @@ namespace msbplaunch
 			{
 				runDatabaseBackup(db);
 			}
+			// Send summary report
+			if (currentSettings.SendReport) sendSummaryReport(aDatabases.Count);
 
 			log.Info(String.Format("MSBPLaunch successfully: databases {0}/{1}, total size {2} Mb", 
 				TotalBackupSuccess, aDatabases.Count, Math.Round(TotalBackupSize / 1024 / 1024)));
@@ -156,7 +161,56 @@ namespace msbplaunch
 			{
 				log.Error(String.Format("... ERROR: {0}", sOutput));
 			}
+			// Store results
+			SortedList BackupResult = new SortedList();
+			BackupResult.Add("time", BackupTime);
+			BackupResult.Add("size", BackupSize);
+			ReportDatabases.Add(db, BackupResult);
+		}
 
+		static void sendSummaryReport(int dbCount)
+		{
+			// Create report
+			StringBuilder reportString = new StringBuilder();
+			reportString.AppendLine("<!DOCTYPE html>");
+			reportString.AppendLine("");
+			reportString.AppendLine("<html><head><meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\" />");
+			reportString.AppendFormat("<title>{0} - SQL backup Report</title></head><body>", System.Net.Dns.GetHostName());
+			reportString.AppendFormat("<h1>{0} - SQL backup Report</h1>", System.Net.Dns.GetHostName());
+			reportString.AppendFormat("<p><b>{0}</b></p>", DateTime.Now);
+			reportString.AppendLine("<table border=1><tr><th align=left>Database</th><th align=left>Time</th><th align=left>Size</th></tr>");
+			for (int i = 0; i < ReportDatabases.Count; i++)
+			{
+				SortedList BackupResult = new SortedList();
+				BackupResult = (SortedList)ReportDatabases.GetByIndex(i);
+				reportString.AppendFormat("<tr><td>{0}</td><td>{1}</td><td align=right>{2}</td></tr>",
+					ReportDatabases.GetKey(i).ToString(),
+					BackupResult.GetByIndex(BackupResult.IndexOfKey("time")),
+					BackupResult.GetByIndex(BackupResult.IndexOfKey("size"))
+				);
+			}
+			reportString.AppendFormat("<tr><td colspan=3><b>Total: {0} files, {1} Mb</b></td></tr></table><br>", dbCount, Math.Round((double)TotalBackupSize / 1024 / 1024));
+			reportString.AppendLine("</body></html>");
+
+			//  Send report ////
+			try
+			{
+				MailMessage mail = new MailMessage();
+				SmtpClient SmtpServer = new SmtpClient(Program.currentSettings.SMTP_Server);
+				mail.From = new MailAddress(Program.currentSettings.Mail_From);
+				mail.To.Add(Program.currentSettings.Mail_To);
+				mail.Subject = string.Format("{0} - sqlbackup success {1}/{2} databases, total size: {3} Mb, errors: {4}",
+					System.Net.Dns.GetHostName(), TotalBackupSuccess, dbCount, Math.Round((double)TotalBackupSize / 1024 / 1024), dbCount - Program.TotalBackupSuccess);
+				mail.IsBodyHtml = true;
+				mail.Body = reportString.ToString();
+				//				mail.Attachments.Add(new Attachment(LogFile, MediaTypeNames.Text.Plain));
+				SmtpServer.Send(mail);
+				log.Info("Successfully send summary report");
+			}
+			catch (Exception ex)
+			{
+				log.Warn(ex.ToString());
+			}
 		}
 	}
 
@@ -174,6 +228,11 @@ namespace msbplaunch
 	{
 		public string MsbpExe;		// Path to SQL Compressed binary (msbp.exe)
 		public string BackupPath;	// Path to store backup copies
+		// Mail settings
+		public string SMTP_Server;
+		public string Mail_From;
+		public string Mail_To;
+		public bool SendReport;
 
 		public ProgramSettings(string iniFileName)
 		{
@@ -227,6 +286,21 @@ namespace msbplaunch
 					Program.log.Fatal(String.Format("MSBPLaunch stop: Cannot create directory {0}. Stack: {1}", BackupPath, ex));
 					Environment.Exit(2);
 				}
+			}
+			// check mail settings
+			SMTP_Server = iniData["Mail"]["SMTP_Server"];
+			Mail_From = iniData["Mail"]["Mail_From"];
+			Mail_To = iniData["Mail"]["Mail_To"];
+			if (String.IsNullOrWhiteSpace(SMTP_Server) || String.IsNullOrWhiteSpace(Mail_From) || String.IsNullOrWhiteSpace(Mail_To))
+			{
+				SendReport = false;
+				Program.log.Warn("Check mail settings. Send summary report DISABLED");
+			}
+			else
+			{
+				SendReport = true;
+				Program.log.Info("Send summary report ENABLED");
+
 			}
 		}
 	}
