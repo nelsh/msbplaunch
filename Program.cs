@@ -20,9 +20,12 @@ namespace msbplaunch
 		static public ProgramSettings currentSettings;
 		// struct for store backup settings
 		static public BackupSettings currentBackups;
-		// create variables for report
+		// create variables for summary report
 		static double TotalBackupSize = 0;
 		static int TotalBackupSuccess = 0;
+		static int TotalDelete = 0;
+		static string DeletedBackups = "";
+		static int TotalDeleteWarnings = 0;
 		static SortedList ReportDatabases = new SortedList();
 
 
@@ -43,6 +46,7 @@ namespace msbplaunch
 			foreach (String db in aDatabases)
 			{
 				runDatabaseBackup(db);
+				removeObsoleteBackups(db);
 			}
 			// Send summary report
 			if (currentSettings.SendReport) sendSummaryReport(aDatabases.Count);
@@ -190,6 +194,11 @@ namespace msbplaunch
 				);
 			}
 			reportString.AppendFormat("<tr><td colspan=3><b>Total: {0} files, {1} Mb</b></td></tr></table><br>", dbCount, Math.Round((double)TotalBackupSize / 1024 / 1024));
+			if (Program.TotalDelete > 0)
+			{
+				reportString.AppendFormat("<p>Deleted backups: {0}</p>", Program.TotalDelete);
+				reportString.AppendFormat("<ol>{0}</ul>", Program.DeletedBackups);
+			}
 			reportString.AppendLine("</body></html>");
 
 			//  Send report ////
@@ -199,8 +208,8 @@ namespace msbplaunch
 				SmtpClient SmtpServer = new SmtpClient(Program.currentSettings.SMTP_Server);
 				mail.From = new MailAddress(Program.currentSettings.Mail_From);
 				mail.To.Add(Program.currentSettings.Mail_To);
-				mail.Subject = string.Format("{0} - sqlbackup success {1}/{2} databases, total size: {3} Mb, errors: {4}",
-					System.Net.Dns.GetHostName(), TotalBackupSuccess, dbCount, Math.Round((double)TotalBackupSize / 1024 / 1024), dbCount - Program.TotalBackupSuccess);
+				mail.Subject = string.Format("{0} - sqlbackup success {1}/{2} databases, total size: {3} Mb, errors: {4}, warnings {5}",
+					System.Net.Dns.GetHostName(), TotalBackupSuccess, dbCount, Math.Round((double)TotalBackupSize / 1024 / 1024), dbCount - Program.TotalBackupSuccess, Program.TotalDeleteWarnings);
 				mail.IsBodyHtml = true;
 				mail.Body = reportString.ToString();
 				//				mail.Attachments.Add(new Attachment(LogFile, MediaTypeNames.Text.Plain));
@@ -211,6 +220,41 @@ namespace msbplaunch
 			{
 				log.Warn(ex.ToString());
 			}
+		}
+
+		static void removeObsoleteBackups(String db)
+		{
+			long datestop = Convert.ToInt64(Program.currentBackups.CurrentDateTime.AddDays(-Program.currentBackups.StorageTime).ToString("yyyyMMdd"));
+			System.Text.RegularExpressions.Regex fx = new System.Text.RegularExpressions.Regex(Program.currentBackups.Id + @"\d{8}");
+			System.Text.RegularExpressions.Regex rx = new System.Text.RegularExpressions.Regex(@"\d{8}");
+			DirectoryInfo di = new DirectoryInfo(Path.Combine(currentSettings.BackupPath, db.ToString()));
+			FileInfo[] afi = di.GetFiles();
+			foreach (FileInfo fi in afi)
+			{
+				if (fx.IsMatch(fi.Name))
+				{
+					if (Convert.ToInt64(rx.Match(fi.Name).Value) < datestop)
+						try
+						{
+							//fi.Delete();
+							log.Info("Delete file: " + fi.Name);
+							Program.TotalDelete++;
+							Program.DeletedBackups = Program.DeletedBackups + String.Format("<li>{0}", fi.Name);
+						}
+						catch
+						{
+							log.Warn("ERROR delete file: " + fi.Name);
+							Program.TotalDeleteWarnings++;
+						}
+				}
+				else
+				{
+					if (!rx.IsMatch(fi.Name))
+						log.Warn("Unknown file: " + fi.Name);
+					Program.TotalDeleteWarnings++;
+				}
+			}
+
 		}
 	}
 
@@ -233,6 +277,8 @@ namespace msbplaunch
 		public string Mail_From;
 		public string Mail_To;
 		public bool SendReport;
+		public SortedList StorageTime;
+		public int WeeklyFullBackup;
 
 		public ProgramSettings(string iniFileName)
 		{
@@ -256,8 +302,17 @@ namespace msbplaunch
 				Environment.Exit(2);
 			}
 			// check msbp.exe
-			MsbpExe = iniData["General"]["MSBP_Exe"];
-			if (String.IsNullOrWhiteSpace(MsbpExe))
+			MsbpExe = "";
+			try
+			{
+				MsbpExe = iniData["General"]["MsbpExe"];
+				if (String.IsNullOrWhiteSpace(MsbpExe))
+				{
+					Program.log.Fatal("MSBPLaunch stop: Not found path settings for msbp.exe");
+					Environment.Exit(2);
+				}
+			}
+			catch
 			{
 				Program.log.Fatal("MSBPLaunch stop: Not found path settings for msbp.exe");
 				Environment.Exit(2);
@@ -268,8 +323,17 @@ namespace msbplaunch
 				Environment.Exit(2);
 			}
 			// check backup path and create it if not exists
-			BackupPath = iniData["General"]["Backup_Path"];
-			if (String.IsNullOrWhiteSpace(BackupPath))
+			BackupPath = "";
+			try
+			{
+				BackupPath = iniData["General"]["BackupPath"];
+				if (String.IsNullOrWhiteSpace(BackupPath))
+				{
+					Program.log.Fatal("MSBPLaunch stop: Not found path settings for backups");
+					Environment.Exit(2);
+				}
+			}
+			catch
 			{
 				Program.log.Fatal("MSBPLaunch stop: Not found path settings for backups");
 				Environment.Exit(2);
@@ -288,20 +352,67 @@ namespace msbplaunch
 				}
 			}
 			// check mail settings
-			SMTP_Server = iniData["Mail"]["SMTP_Server"];
-			Mail_From = iniData["Mail"]["Mail_From"];
-			Mail_To = iniData["Mail"]["Mail_To"];
-			if (String.IsNullOrWhiteSpace(SMTP_Server) || String.IsNullOrWhiteSpace(Mail_From) || String.IsNullOrWhiteSpace(Mail_To))
+			SMTP_Server = "";
+			Mail_From = "";
+			Mail_To = "";
+			try
+			{
+				SMTP_Server = iniData["Mail"]["SMTP_Server"];
+				Mail_From = iniData["Mail"]["Mail_From"];
+				Mail_To = iniData["Mail"]["Mail_To"];
+				if (String.IsNullOrWhiteSpace(SMTP_Server) || String.IsNullOrWhiteSpace(Mail_From) || String.IsNullOrWhiteSpace(Mail_To))
+				{
+					SendReport = false;
+					Program.log.Warn("Check mail settings. Send summary report DISABLED");
+				}
+				else
+				{
+					SendReport = true;
+					Program.log.Info("Send summary report ENABLED");
+				}
+			}
+			catch
 			{
 				SendReport = false;
 				Program.log.Warn("Check mail settings. Send summary report DISABLED");
 			}
+			// set storage time
+			StorageTime = new SortedList();
+			try
+			{
+				StorageTime.Add("D", iniData["StorageTime"]["D"]);
+				StorageTime.Add("W", iniData["StorageTime"]["W"]);
+				StorageTime.Add("Q", iniData["StorageTime"]["Q"]);
+			}
+			catch
+			{
+				StorageTime.Add("D", 0);
+				StorageTime.Add("W", 0);
+				StorageTime.Add("Q", 0);
+			}
+			// get week of day a full backup
+			string sWeeklyFullBackup = "";
+			try
+			{
+				sWeeklyFullBackup = iniData["General"]["WeeklyFullBackup"];
+			}
+			catch {}
+			if (String.IsNullOrWhiteSpace(sWeeklyFullBackup))
+			{
+				WeeklyFullBackup = 6;
+			}
 			else
 			{
-				SendReport = true;
-				Program.log.Info("Send summary report ENABLED");
-
+				try
+				{
+					WeeklyFullBackup = Convert.ToInt32(sWeeklyFullBackup);
+				}
+				catch
+				{
+					WeeklyFullBackup = 6;
+				}
 			}
+
 		}
 	}
 
@@ -318,35 +429,58 @@ namespace msbplaunch
 		public string CurrentDateString;
 		public string Id;
 		public string Method;
+		public int StorageTime;
 
 		public BackupSettings(DateTime dt)
 		{
 			CurrentDateTime = dt;
 			CurrentDateString = dt.ToString("yyyyMMdd");
-			switch ((int)dt.DayOfWeek)
+			if (((int)dt.DayOfWeek == Program.currentSettings.WeeklyFullBackup))
 			{
-				case 6:
-					int CurrentWeekYear = CultureInfo.CurrentCulture.Calendar.GetWeekOfYear
-					(
-						CurrentDateTime,
-						CultureInfo.CurrentCulture.DateTimeFormat.CalendarWeekRule,
-						CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek
-					);
-					Method = "full";
-					if ((CurrentWeekYear % 13) == 1)
-					{
-						Id = "Q";
-					}
-					else
-					{
-						Id = "W";
-					}
-					break;
-				default:
-					Id = "D";
-					Method = "differential";
-					break;
+				int CurrentWeekYear = CultureInfo.CurrentCulture.Calendar.GetWeekOfYear
+				(
+					CurrentDateTime,
+					CultureInfo.CurrentCulture.DateTimeFormat.CalendarWeekRule,
+					CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek
+				);
+				Method = "full";
+				if ((CurrentWeekYear % 13) == 1)
+				{
+					Id = "Q";
+					Program.log.Info("Today do Quarter Full Backup");
+				}
+				else
+				{
+					Id = "W";
+					Program.log.Info("Today do Weekly Full Backup");
+				}
+
 			}
+			else
+			{
+				Id = "D";
+				Method = "differential";
+				Program.log.Info("Today do Differential Backup");
+			}
+			string sStorageTime = Program.currentSettings.StorageTime[Id].ToString();
+			if (String.IsNullOrWhiteSpace(sStorageTime))
+			{
+				StorageTime = 0;
+				Program.log.Warn("Storage time limit not set");
+			}
+			else
+			{
+				try
+				{
+					StorageTime = Convert.ToInt32(sStorageTime);
+				}
+				catch
+				{
+				StorageTime = 0;
+				Program.log.Warn("Storage time limit not set");
+				}
+			}
+			
 		}
 	}
 
