@@ -38,20 +38,38 @@ namespace msbplaunch
 				System.Diagnostics.Process.GetCurrentProcess().ProcessName + ".ini"));
 			// Get list active databases, exclude system databases
 			ArrayList aDatabases = getDatabasesList();
-			// Set current backup settings
-			currentBackups = new BackupSettings(DateTime.Now);
 
-
-			// Run backup command for every database
-			foreach (String db in aDatabases)
+			if (args.Length > 0 && args[0] != "-1")
 			{
-				runDatabaseBackup(db);
-				removeObsoleteBackups(db);
+				string db = args[0].ToLower();
+				if (aDatabases.Contains(db))
+				{
+					currentBackups = new BackupSettings(db);
+					runDatabaseBackup(db);
+				}
+				else
+					log.Info(String.Format("MSBPLaunch: database {0} not found", db));
 			}
+			else
+			{
+				// Set current backup settings
+				if (args.Length > 0 && args[0] == "-1")
+					currentBackups = new BackupSettings(args[0]);
+				else
+					currentBackups = new BackupSettings(DateTime.Now);
+				// Run backup command for every database
+				foreach (String db in aDatabases)
+				{
+					runDatabaseBackup(db);
+					if (currentBackups.StorageTime >0)
+						removeObsoleteBackups(db);
+				}
+			}
+
 			// Send summary report
 			if (currentSettings.SendReport) sendSummaryReport(aDatabases.Count);
 
-			log.Info(String.Format("MSBPLaunch successfully: databases {0}/{1}, total size {2} Mb", 
+			log.Info(String.Format("MSBPLaunch successfully: databases {0}/{1}, total size {2} Mb",
 				TotalBackupSuccess, aDatabases.Count, Math.Round(TotalBackupSize / 1024 / 1024)));
 		}
 		
@@ -81,7 +99,7 @@ namespace msbplaunch
 			ArrayList aDatabases = new ArrayList();
 			if (reader.HasRows)
 				while (reader.Read())
-					aDatabases.Add(reader.GetString(0));
+					aDatabases.Add(reader.GetString(0).ToLower());
 			reader.Close();
 			connection.Close();
 			// If databaselist is empty - exit
@@ -208,8 +226,8 @@ namespace msbplaunch
 				SmtpClient SmtpServer = new SmtpClient(Program.currentSettings.SMTP_Server);
 				mail.From = new MailAddress(Program.currentSettings.Mail_From);
 				mail.To.Add(Program.currentSettings.Mail_To);
-				mail.Subject = string.Format("{0} - sqlbackup success {1}/{2} databases, total size: {3} Mb, errors: {4}, warnings {5}",
-					System.Net.Dns.GetHostName(), TotalBackupSuccess, dbCount, Math.Round((double)TotalBackupSize / 1024 / 1024), dbCount - Program.TotalBackupSuccess, Program.TotalDeleteWarnings);
+				mail.Subject = string.Format("{0} - sqlbackup success {1}/{2} databases, total size: {3} Mb, delete warnings {4}",
+					System.Net.Dns.GetHostName(), TotalBackupSuccess, dbCount, Math.Round((double)TotalBackupSize / 1024 / 1024), Program.TotalDeleteWarnings);
 				mail.IsBodyHtml = true;
 				mail.Body = reportString.ToString();
 				//				mail.Attachments.Add(new Attachment(LogFile, MediaTypeNames.Text.Plain));
@@ -225,6 +243,7 @@ namespace msbplaunch
 		static void removeObsoleteBackups(String db)
 		{
 			long datestop = Convert.ToInt64(Program.currentBackups.CurrentDateTime.AddDays(-Program.currentBackups.StorageTime).ToString("yyyyMMdd"));
+			log.Info(String.Format("Delete obsolete backups older than '{0}'", datestop.ToString()));
 			System.Text.RegularExpressions.Regex fx = new System.Text.RegularExpressions.Regex(Program.currentBackups.Id + @"\d{8}");
 			System.Text.RegularExpressions.Regex rx = new System.Text.RegularExpressions.Regex(@"\d{8}");
 			DirectoryInfo di = new DirectoryInfo(Path.Combine(currentSettings.BackupPath, db.ToString()));
@@ -234,9 +253,10 @@ namespace msbplaunch
 				if (fx.IsMatch(fi.Name))
 				{
 					if (Convert.ToInt64(rx.Match(fi.Name).Value) < datestop)
+					{
 						try
 						{
-							//fi.Delete();
+							fi.Delete();
 							log.Info("Delete file: " + fi.Name);
 							Program.TotalDelete++;
 							Program.DeletedBackups = Program.DeletedBackups + String.Format("<li>{0}", fi.Name);
@@ -246,6 +266,7 @@ namespace msbplaunch
 							log.Warn("ERROR delete file: " + fi.Name);
 							Program.TotalDeleteWarnings++;
 						}
+					}
 				}
 				else
 				{
@@ -481,6 +502,17 @@ namespace msbplaunch
 				}
 			}
 			
+		}
+
+		public BackupSettings(string args)
+		{
+			CurrentDateTime = DateTime.Now;
+			CurrentDateString = DateTime.Now.ToString("yyyyMMdd");
+			Method = "full";
+			Program.log.Info("Today do First Full Backup");
+			Id = "W";
+			StorageTime = 0;
+			Program.log.Warn("Storage time limit not used");
 		}
 	}
 
