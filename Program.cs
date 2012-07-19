@@ -80,9 +80,14 @@ namespace msbplaunch
 		static ArrayList getDatabasesList()
 		{
 			SqlConnection connection = new SqlConnection("Persist Security Info=False;Trusted_Connection=True;database=master;server=(local)");
-			SqlCommand command = new SqlCommand(
-				"SELECT name FROM sysdatabases WHERE (name NOT IN('master', 'model', 'msdb', 'tempdb', 'distribution')) AND (CONVERT(bit, status & 512)=0) ORDER BY name",
-				connection);
+			string sql = "";
+			if (Program.currentSettings.ExcludeDB.Length > 0)
+				sql = String.Format(
+					"SELECT name FROM sysdatabases WHERE (CONVERT(bit, status & 512)=0) AND (name NOT IN({0})) ORDER BY name",
+					Program.currentSettings.ExcludeDB);
+			else
+				sql = "SELECT name FROM sysdatabases WHERE ((CONVERT(bit, status & 512)=0) ORDER BY name";
+			SqlCommand command = new SqlCommand(sql,connection);
 			SqlDataReader reader = null;
 			try
 			{
@@ -300,6 +305,7 @@ namespace msbplaunch
 		public bool SendReport;
 		public SortedList StorageTime;
 		public int WeeklyFullBackup;
+		public string ExcludeDB;
 
 		public ProgramSettings(string iniFileName)
 		{
@@ -433,7 +439,32 @@ namespace msbplaunch
 					WeeklyFullBackup = 6;
 				}
 			}
-
+			// get list a excluded databases
+			ExcludeDB = "";
+			try
+			{
+				string ExcludeTmp = iniData["General"]["ExcludeDB"];
+				if (!String.IsNullOrWhiteSpace(ExcludeTmp))
+				{
+					Array aExcuded = ExcludeTmp.Trim().Split(',');
+					int i = 0;
+					foreach (string s in aExcuded)
+					{
+						if (i > 0)
+							ExcludeDB = ExcludeDB + ",";
+						ExcludeDB = ExcludeDB + "'" + s.Trim() + "'";
+						i++;
+					}
+				}
+			}
+			catch 
+			{
+				ExcludeDB = "";
+			}
+			if (ExcludeDB.Length > 0)
+				Program.log.Info(String.Format("Excluded database: {0}", ExcludeDB));
+			else
+				Program.log.Info(String.Format("Excluded database: {0}", "NONE"));
 		}
 	}
 
