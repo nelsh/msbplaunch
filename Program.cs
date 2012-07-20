@@ -69,8 +69,8 @@ namespace msbplaunch
 			// Send summary report
 			if (currentSettings.SendReport) sendSummaryReport(aDatabases.Count);
 
-			log.Info(String.Format("MSBPLaunch successfully: databases {0}/{1}, total size {2} Mb",
-				TotalBackupSuccess, aDatabases.Count, Math.Round(TotalBackupSize / 1024 / 1024)));
+			log.Info(String.Format("MSBPLaunch successfully: databases {0}/{1}, total size {2} Mb, delete warnings {3}",
+				TotalBackupSuccess, aDatabases.Count, Math.Round(TotalBackupSize / 1024 / 1024), Program.TotalDeleteWarnings));
 		}
 		
 		/// <summary>
@@ -277,7 +277,6 @@ namespace msbplaunch
 				{
 					if (!rx.IsMatch(fi.Name))
 						log.Warn("Unknown file: " + fi.Name);
-					Program.TotalDeleteWarnings++;
 				}
 			}
 
